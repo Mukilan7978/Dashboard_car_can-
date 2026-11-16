@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="$ROOT/.venv/bin/python"
+CHANNEL="${AUTODASH_CHANNEL:-vcan0}"
+INTERFACE="${AUTODASH_INTERFACE:-socketcan}"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/automotive-dashboard-$(id -u)"
+SOCKET="${AUTODASH_CONTROL_SOCKET:-$RUNTIME_DIR/control.sock}"
+LOG_DIR="$ROOT/logs"
+
+# -------------------------------------------------
+# 1.  Python / virtual‑env check
+# -------------------------------------------------
+if [[ ! -x "$PYTHON" ]]; then
+    echo "Python virtual environment not found at $PYTHON"
+    echo "Create it with: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    exit 1
+fi
+
+# -------------------------------------------------
+# 2.  Ensure vcan0 exists (SocketCAN)
+# -------------------------------------------------
+if [[ "$INTERFACE" == "socketcan" && "$CHANNEL" == "vcan0" ]]; then
+    # vcan0 already exists?
+    if ip link show vcan0 >/dev/null 2>&1; then
+        # interface exists – check if it is up
+        if ip link show vcan0 | grep -q "UP"; then
+            echo "vcan0 is already up."
+        else
+            echo "vcan0 exists but is down. Please bring it up with: sudo ip link set vcan0 up"
+            exit 1
+        fi
+    else
+        # vcan0 does not exist – ask user to create it
+        echo "vcan0 does not exist. Please create it with: sudo ip link add vcan0 type vcan && sudo ip link set vcan0 up"
+        exit 1
+    fi
+fi
+
+# -------------------------------------------------
+# 3.  Start the vehicle simulator (background)
+# -------------------------------------------------
+mkdir -p "$RUNTIME_DIR" "$LOG_DIR" "$(dirname "$SOCKET")"
+rm -f "$SOCKET"
+
+"$PYTHON" -m vehicle.simulator \
+    --channel "$CHANNEL" \
+    --interface "$INTERFACE" \
+    --control-socket "$SOCKET" \
+    >"$LOG_DIR/simulator.out" 2>&1 &
+SIM_PID=$!
+
+# wait until the simulator’s control socket appears
+START=0
+while [[ $START -lt 40 ]]; do
+    if [[ -S "$SOCKET" ]]; then break; fi
+    if ! kill -0 "$SIM_PID" 2>/dev/null; then
+        echo "Simulator failed to start. Log: $LOG_DIR/simulator.out"
+        cat "$LOG_DIR/simulator.out"
+        exit 1
+    fi
+    sleep 0.1
+    START=$((START+1))
+done
+if [[ ! -S "$SOCKET" ]]; then
+    echo "Simulator did not create its control socket: $SOCKET"
+    exit 1
+fi
+
+# -------------------------------------------------
+# 4.  Export CAN settings (so dashboard & monitor can find the socket)
+# -------------------------------------------------
+export AUTODASH_CHANNEL="$CHANNEL"
+export AUTODASH_INTERFACE="$INTERFACE"
+export AUTODASH_CONTROL_SOCKET="$SOCKET"
+export PYTHONPATH="$ROOT"
+
+# -------------------------------------------------
+# 5.  Make the X11 display available to the dashboard
+# -------------------------------------------------
+export DISPLAY=:0
+
+# -------------------------------------------------
+# 5.  Detect a suitable terminal emulator
+# -------------------------------------------------
+TERMINAL=""
+for t in gnome-terminal x-terminal-emulator konsole kitty foot; do
+    if command -v "$t" >/dev/null 2>&1; then
+        TERMINAL="$t"
+        break
+    fi
+done
+
+if [[ -z "$TERMINAL" ]]; then
+    echo "No supported terminal emulator found; aborting."
+    # clean up simulator
+    kill "$SIM_PID" 2>/dev/null || true
+    wait "$SIM_PID" 2>/dev/null || true
+    exit 1
+fi
+
+# -------------------------------------------------
+# 6.  Launch the CAN monitor in a separate terminal
+# -------------------------------------------------
+MONITOR_PID=""
+"$TERMINAL" \
+    --title="Live CAN Monitor" \
+    -e "$PYTHON" "$ROOT/tools/monitor_can.py" 2>/dev/null &
+MONITOR_PID=$!
+# give the monitor a moment to start
+sleep 1
+
+# -------------------------------------------------
+# 7.  Launch the dashboard GUI (background)
+# -------------------------------------------------
+# Try x11 first, fall back to minimal if unavailable
+QT_PLATFORM="xcb"
+export QT_QPA_PLATFORM="$QT_PLATFORM"
+nohup "$PYTHON" "$ROOT/main.py" \
+    --channel "$CHANNEL" \
+    --interface "$INTERFACE" \
+    --control-socket "$SOCKET" \
+    >"$LOG_DIR/dashboard.out" 2>&1 &
+DASH_PID=$!
+
+# give the dashboard a couple of seconds to create its windows
+sleep 2
+
+# -------------------------------------------------
+# 8.  Launch the fourth terminal: Live CAN Signal Decoder
+# -------------------------------------------------
+DECODER_PID=""
+"$TERMINAL" \
+    --title="Live CAN Decoder" \
+    -e "$PYTHON" "$ROOT/tools/live_can_decoder.py" 2>/dev/null &
+DECODER_PID=$!
+# give the decoder a moment to start
+sleep 1
+
+# -------------------------------------------------
+# 9.  Verify all processes are running (warn only, don't exit)
+# -------------------------------------------------
+if ! kill -0 "$SIM_PID" 2>/dev/null; then
+    echo "WARNING: Simulator died during startup."
+fi
+if ! kill -0 "$DASH_PID" 2>/dev/null; then
+    echo "WARNING: Dashboard died during startup."
+    echo "Dashboard log:"
+    tail -n 20 "$LOG_DIR/dashboard.out" 2>/dev/null
+fi
+if ! kill -0 "$MONITOR_PID" 2>/dev/null; then
+    echo "WARNING: CAN monitor died during startup."
+fi
+if ! kill -0 "$DECODER_PID" 2>/dev/null; then
+    echo "WARNING: LIVE CAN DECODER died during startup."
+fi
+
+# -------------------------------------------------
+# 10.  Clean‑up trap – kill all child processes on exit
+# -------------------------------------------------
+cleanup() {
+    if [[ -n "$SIM_PID" ]]; then
+        kill "$SIM_PID" 2>/dev/null || true
+        wait "$SIM_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$DASH_PID" ]]; then
+        kill "$DASH_PID" 2>/dev/null || true
+        wait "$DASH_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$MONITOR_PID" ]]; then
+        kill "$MONITOR_PID" 2>/dev/null || true
+        wait "$MONITOR_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$DECODER_PID" ]]; then
+        kill "$DECODER_PID" 2>/dev/null || true
+        wait "$DECODER_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# -------------------------------------------------
+# 11.  Keep the wrapper alive so the processes are not killed when the
+#      terminal window is merely closed (the trap will fire on real exit)
+# -------------------------------------------------
+while true; do
+    sleep 60   # idle – the trap will terminate everything on Ctrl‑C / kill
+done

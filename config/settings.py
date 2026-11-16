@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+LOGS_DIR = ROOT / "logs"
+SCREENSHOTS_DIR = ROOT / "screenshots"
+ASSETS_DIR = ROOT / "assets"
+
+APP_NAME = "Automotive Dashboard Simulator"
+APP_SHORT_NAME = "AUTOSIM"
+ORG_NAME = "AutoSimX Labs"
+
+DISPLAY_WIDTH = 1920
+DISPLAY_HEIGHT = 1080
+MIN_WIDTH = 1280
+MIN_HEIGHT = 720
+
+DEFAULT_WINDOW_WIDTH = 1600
+DEFAULT_WINDOW_HEIGHT = 900
+
+RUNTIME_BASE = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+RUNTIME_DIR = RUNTIME_BASE / f"automotive-dashboard-{os.getuid()}"
+CONTROL_SOCKET = Path(
+    os.environ.get("AUTODASH_CONTROL_SOCKET", str(RUNTIME_DIR / "control.sock"))
+)
+
+LINK_TIMEOUT_S = 2.0
+SIGNAL_STALE_MULTIPLIER = 3
+
+DEFAULT_DRIVING_MODE = "COMFORT"
+DEFAULT_STEERING_SETTING = "COMFORT"
+
+TANK_CAPACITY_L = 60.0
+FUEL_LOW_PERCENT = 10.0
+ENGINE_HOT_C = 110.0
+BATTERY_LOW_V = 11.8
+TYRE_LOW_BAR = 2.0
+TYRE_HIGH_BAR = 3.0
+
+CAN_LOG_MAX_BYTES = 8 * 1024 * 1024
+SECURITY_LOG_MAX_BYTES = 4 * 1024 * 1024

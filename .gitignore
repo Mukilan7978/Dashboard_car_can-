@@ -1,0 +1,58 @@
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+.venv*/
+
+# Bytecode / compiled Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Python test caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.pyright
+.ruff_cache/
+
+# Runtime logs and artefacts
+logs/
+*.log
+*.csv
+*.sock
+*.sock.*
+
+# Temporary / editor files
+*~
+*.swp
+*.swo
+*.swn
+*.orig
+*.rej
+.ropeproject
+/.vscode/
+.idea/
+*.code-workspace
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Built / generated
+build/
+dist/
+*.egg-info/
+*.egg
