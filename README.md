@@ -1,3 +1,4 @@
+
 # Automotive Dashboard Simulator
 
 A complete, original Linux automotive cockpit simulator. A vehicle simulation
@@ -483,3 +484,4 @@ LICENSE        MIT licence
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
